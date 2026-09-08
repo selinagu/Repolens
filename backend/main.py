@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -11,17 +12,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from backend.file_selector import SelectedFile, rank_repository_files, select_file_contents
+from backend.analyzer import GroundingValidationError, RepositoryAnalyzer
+from backend.file_selector import (
+    SelectedFile,
+    rank_repository_files,
+    select_file_contents,
+)
 from backend.github_client import (
     GitHubClient,
     GitHubClientError,
+    RepositoryMetadata,
     parse_repository_url,
 )
 
 logger = logging.getLogger("repolens")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
 
-app = FastAPI(title="RepoLens API", version="0.2.0")
+app = FastAPI(title="RepoLens API", version="0.3.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -44,105 +51,46 @@ class ErrorResponse(BaseModel):
     error: str
 
 
-def _file_description(selected_file: SelectedFile) -> str:
-    if selected_file.path.lower().endswith("readme.md"):
-        return "Repository documentation and the fastest starting point for understanding the project."
-    if selected_file.score >= 40:
-        return "A high-signal entry or project metadata file selected early in the repository reading path."
-    if selected_file.score >= 25:
-        return "A likely application entry point or core module selected by the deterministic file ranking."
-    return "A supporting source file selected because it adds useful context to the repository structure."
+@dataclass(frozen=True)
+class IngestedRepository:
+    metadata: RepositoryMetadata
+    selected_files: list[SelectedFile]
 
 
-def _placeholder_analysis(
-    metadata: Any, selected_files: list[SelectedFile], repository_url: str
-) -> dict[str, Any]:
-    entrypoint_names = {
-        "main.py",
-        "app.py",
-        "server.py",
-        "cli.py",
-        "train.py",
-        "run.py",
-        "index.js",
-        "index.ts",
-        "index.tsx",
-        "main.js",
-        "main.ts",
-        "main.tsx",
-    }
-    entry_points = [
-        file
-        for file in selected_files
-        if file.path.rsplit("/", 1)[-1].lower() in entrypoint_names
-    ][:5]
-    if not entry_points:
-        entry_points = selected_files[: min(3, len(selected_files))]
+ANALYZER = RepositoryAnalyzer()
 
-    key_files = selected_files[:8]
-    description = metadata.description.strip()
-    overview = description or (
-        f"A public {metadata.language} repository with {len(selected_files)} high-signal "
-        "files selected for a bounded first read. The initial analysis is deterministic "
-        "and intentionally stops before LLM interpretation."
+
+def _ingest_repository(repository_url: str) -> IngestedRepository:
+    repository = parse_repository_url(repository_url)
+    client = GitHubClient()
+    metadata = client.get_repository_metadata(repository)
+    tree = client.get_recursive_tree(repository, metadata.default_branch)
+    ranked_candidates = rank_repository_files(tree)
+
+    logger.info(
+        "ranked candidates:\n%s",
+        "\n".join(
+            f"{candidate.score:>3}  {candidate.path}" for candidate in ranked_candidates
+        ),
     )
-    architecture = [
-        f"GitHub metadata and the {metadata.default_branch} branch define the repository snapshot.",
-        f"The deterministic selector ranked {len(selected_files)} files from the public repository tree.",
-        "Entry points, project metadata, and shallow core modules are prioritized before deeper files.",
-        "The next analysis stage can use the bounded file context without downloading the whole repository.",
-    ]
-    return {
-        "repositoryUrl": repository_url,
-        "owner": metadata.owner,
-        "repositoryName": f"{metadata.owner}/{metadata.repo}",
-        "description": description,
-        "defaultBranch": metadata.default_branch,
-        "overview": overview,
-        "language": metadata.language,
-        "stars": metadata.stars,
-        "entryPoints": [
-            {
-                "path": file.path,
-                "kind": "entry",
-                "description": _file_description(file),
-            }
-            for file in entry_points
-        ],
-        "keyFiles": [
-            {
-                "path": file.path,
-                "kind": _file_kind(file.path),
-                "description": _file_description(file),
-            }
-            for file in key_files
-        ],
-        "architecture": architecture,
-        "analyzedAt": datetime.now(timezone.utc).isoformat(),
-        "selectedFileCount": len(selected_files),
-        "selectedTotalChars": sum(file.included_chars for file in selected_files),
-        "selectedFiles": [
-            {
-                "path": file.path,
-                "score": file.score,
-                "includedChars": file.included_chars,
-                "truncated": file.truncated,
-            }
-            for file in selected_files
-        ],
-    }
+    fetched_files: list[tuple[Any, str]] = []
+    for candidate in ranked_candidates:
+        try:
+            content = client.fetch_file(
+                repository, metadata.default_branch, candidate.path
+            )
+        except GitHubClientError as error:
+            logger.info("skipping %s: %s", candidate.path, error.message)
+            continue
+        fetched_files.append((candidate, content))
 
-
-def _file_kind(path: str) -> str:
-    lowered = path.lower()
-    filename = lowered.rsplit("/", 1)[-1]
-    if filename.endswith(".md"):
-        return "docs"
-    if filename in {"package.json", "pyproject.toml", "requirements.txt", "go.mod"}:
-        return "config"
-    if "test" in filename or "/test" in lowered or "/tests" in lowered:
-        return "test"
-    return "module"
+    selected_files = select_file_contents(fetched_files)
+    logger.info(
+        "selected files=%s total_included_chars=%s",
+        len(selected_files),
+        sum(file.included_chars for file in selected_files),
+    )
+    return IngestedRepository(metadata=metadata, selected_files=selected_files)
 
 
 def _error_response(error: GitHubClientError) -> JSONResponse:
@@ -157,39 +105,50 @@ def healthz() -> dict[str, str]:
 @app.post("/api/analyze", responses={400: {"model": ErrorResponse}})
 def analyze_repository(payload: AnalyzeRepositoryInput) -> JSONResponse:
     try:
-        repository = parse_repository_url(payload.repositoryUrl)
-        client = GitHubClient()
-        metadata = client.get_repository_metadata(repository)
-        tree = client.get_recursive_tree(repository, metadata.default_branch)
-        ranked_candidates = rank_repository_files(tree)
-
-        logger.info(
-            "ranked candidates:\n%s",
-            "\n".join(f"{candidate.score:>3}  {candidate.path}" for candidate in ranked_candidates),
-        )
-
-        fetched_files: list[tuple[Any, str]] = []
-        for candidate in ranked_candidates:
-            try:
-                content = client.fetch_file(
-                    repository, metadata.default_branch, candidate.path
-                )
-            except GitHubClientError as error:
-                logger.info("skipping %s: %s", candidate.path, error.message)
-                continue
-            fetched_files.append((candidate, content))
-
-        selected_files = select_file_contents(fetched_files)
-        total_chars = sum(file.included_chars for file in selected_files)
-        logger.info(
-            "selected files=%s total_included_chars=%s",
-            len(selected_files),
-            total_chars,
-        )
+        ingested = _ingest_repository(payload.repositoryUrl)
+        analysis = ANALYZER.analyze(ingested.metadata, ingested.selected_files)
         return JSONResponse(
-            content=_placeholder_analysis(
-                metadata, selected_files, payload.repositoryUrl.strip()
-            )
+            content={
+                "repositoryUrl": payload.repositoryUrl.strip(),
+                "owner": ingested.metadata.owner,
+                "repositoryName": f"{ingested.metadata.owner}/{ingested.metadata.repo}",
+                "description": ingested.metadata.description.strip(),
+                "defaultBranch": ingested.metadata.default_branch,
+                "overview": analysis.overview.text,
+                "language": ingested.metadata.language,
+                "stars": ingested.metadata.stars,
+                "entryPoints": [
+                    {
+                        "path": item.path,
+                        "kind": item.kind,
+                        "description": item.description,
+                    }
+                    for item in analysis.entry_points
+                ],
+                "keyFiles": [
+                    {
+                        "path": item.path,
+                        "kind": item.kind,
+                        "description": item.description,
+                    }
+                    for item in analysis.key_files
+                ],
+                "architecture": [item.text for item in analysis.architecture],
+                "analyzedAt": datetime.now(timezone.utc).isoformat(),
+                "selectedFileCount": len(ingested.selected_files),
+                "selectedTotalChars": sum(
+                    file.included_chars for file in ingested.selected_files
+                ),
+                "selectedFiles": [
+                    {
+                        "path": file.path,
+                        "score": file.score,
+                        "includedChars": file.included_chars,
+                        "truncated": file.truncated,
+                    }
+                    for file in ingested.selected_files
+                ],
+            }
         )
     except GitHubClientError as error:
         return _error_response(error)
@@ -197,14 +156,16 @@ def analyze_repository(payload: AnalyzeRepositoryInput) -> JSONResponse:
         logger.exception("unexpected repository analysis failure")
         return JSONResponse(
             status_code=502,
-            content={"error": "The repository could not be analyzed right now. Try again."},
+            content={
+                "error": "The repository could not be analyzed right now. Try again."
+            },
         )
 
 
 @app.post("/api/ask", responses={400: {"model": ErrorResponse}})
 def ask_repository(payload: AskRepositoryInput) -> dict[str, Any]:
     try:
-        repository = parse_repository_url(payload.repositoryUrl)
+        parse_repository_url(payload.repositoryUrl)
     except GitHubClientError as error:
         return JSONResponse(status_code=400, content={"error": error.message})
 
@@ -214,12 +175,27 @@ def ask_repository(payload: AskRepositoryInput) -> dict[str, Any]:
             content={"error": "Ask a question with a little more detail."},
         )
 
-    return {
-        "answer": (
-            f"For {repository.owner}/{repository.repo}, start with the highest-ranked "
-            "entry point and follow its imports into the core module. RepoLens has "
-            "ingested a bounded snapshot for this repository, but the answer stage is "
-            "still deterministic placeholder output until an LLM is added."
-        ),
-        "sources": ["README.md", "package.json", "src/index.ts"],
-    }
+    try:
+        ingested = _ingest_repository(payload.repositoryUrl)
+        answer = ANALYZER.answer(
+            ingested.metadata, ingested.selected_files, payload.question.strip()
+        )
+        return {"answer": answer.answer, "sources": list(answer.sources)}
+    except GitHubClientError as error:
+        return _error_response(error)
+    except GroundingValidationError:
+        logger.exception("repository answer failed source-grounding validation")
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error": "The repository answer could not be grounded in its sources."
+            },
+        )
+    except Exception:
+        logger.exception("unexpected repository answer failure")
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error": "The repository could not be queried right now. Try again."
+            },
+        )

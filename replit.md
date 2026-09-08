@@ -1,6 +1,6 @@
 # RepoLens
 
-RepoLens helps developers understand an unfamiliar public GitHub repository quickly through structured mock analysis and source-cited questions.
+RepoLens helps developers understand an unfamiliar public GitHub repository quickly through structured analysis and source-cited questions.
 
 ## Run & Operate
 
@@ -24,13 +24,16 @@ RepoLens helps developers understand an unfamiliar public GitHub repository quic
 - `artifacts/repolens/src/index.css` — RepoLens visual theme, typography, and responsive styles
 - `backend/github_client.py` — safe GitHub URL parsing, metadata/tree/file fetches, and GitHub API errors
 - `backend/file_selector.py` — deterministic eligibility, ranking, and bounded content selection
-- `backend/main.py` — FastAPI routes and deterministic placeholder analysis response
+- `backend/retrieval.py` — deterministic lexical chunk retrieval over selected files
+- `backend/analyzer.py` — structured model boundary and source-grounding validation
+- `backend/main.py` — FastAPI routes for bounded analysis and repository questions
 - `lib/api-spec/openapi.yaml` — source of truth for request and response contracts
 - `lib/api-client-react/src/generated/` — generated React Query hooks
 
 ## Architecture decisions
 
-- GitHub ingestion is real, but analysis and Q&A output remain deterministic placeholders until a future LLM stage.
+- GitHub ingestion and lexical retrieval are deterministic; the analysis model is a narrow replaceable boundary with a safe local baseline.
+- Model output is rejected if it cites files outside the selected or retrieved source context.
 - The app uses the shared `/api` service path, so the frontend can call relative API URLs through the workspace proxy.
 - Repository analysis is returned as a structured reading path: overview, architecture, key files, and entry points.
 

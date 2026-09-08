@@ -11,7 +11,7 @@ tags:
   - name: health
     description: Health operations
   - name: repositories
-    description: Mock repository analysis operations
+    description: Bounded public repository analysis operations
 paths:
   /healthz:
     get:
@@ -31,7 +31,7 @@ paths:
       operationId: analyzeRepository
       tags: [repositories]
       summary: Analyze a public GitHub repository
-      description: Returns realistic mock repository understanding data for a valid public GitHub URL.
+      description: Returns repository understanding data grounded in a bounded selection of source files.
       requestBody:
         required: true
         content:
@@ -56,7 +56,7 @@ paths:
       operationId: askRepository
       tags: [repositories]
       summary: Ask a question about the repository
-      description: Returns a mock source-cited answer for a repository question.
+      description: Returns a source-cited answer retrieved from a bounded repository snapshot.
       requestBody:
         required: true
         content:
