@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "RepoLens"
+description = "A focused developer tool that helps engineers understand unfamiliar public GitHub repositories quickly through structured mock analysis and source-cited questions."
+version = "1.0.0"
+id = "artifacts/repolens"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24385
+
+[services.development]
+run = "pnpm --filter @workspace/repolens run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/repolens", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/repolens/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24385"
+BASE_PATH = "/"

@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: repositories
+    description: Mock repository analysis operations
 paths:
   /healthz:
     get:
@@ -24,6 +26,56 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /analyze:
+    post:
+      operationId: analyzeRepository
+      tags: [repositories]
+      summary: Analyze a public GitHub repository
+      description: Returns realistic mock repository understanding data for a valid public GitHub URL.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnalyzeRepositoryInput"
+      responses:
+        "200":
+          description: Repository analysis
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepositoryAnalysis"
+        "400":
+          description: Invalid repository URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /ask:
+    post:
+      operationId: askRepository
+      tags: [repositories]
+      summary: Ask a question about the repository
+      description: Returns a mock source-cited answer for a repository question.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AskRepositoryInput"
+      responses:
+        "200":
+          description: Answer with source filenames
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepositoryAnswer"
+        "400":
+          description: Invalid question
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +85,94 @@ components:
           type: string
       required:
         - status
+    AnalyzeRepositoryInput:
+      type: object
+      properties:
+        repositoryUrl:
+          type: string
+          minLength: 1
+      required:
+        - repositoryUrl
+    AskRepositoryInput:
+      type: object
+      properties:
+        repositoryUrl:
+          type: string
+          minLength: 1
+        question:
+          type: string
+          minLength: 1
+      required:
+        - repositoryUrl
+        - question
+    RepositoryFile:
+      type: object
+      properties:
+        path:
+          type: string
+        kind:
+          type: string
+          enum: [entry, config, module, docs, test]
+        description:
+          type: string
+      required:
+        - path
+        - kind
+        - description
+    RepositoryAnalysis:
+      type: object
+      properties:
+        repositoryUrl:
+          type: string
+        repositoryName:
+          type: string
+        overview:
+          type: string
+        language:
+          type: string
+        stars:
+          type: integer
+        entryPoints:
+          type: array
+          items:
+            $ref: "#/components/schemas/RepositoryFile"
+        keyFiles:
+          type: array
+          items:
+            $ref: "#/components/schemas/RepositoryFile"
+        architecture:
+          type: array
+          items:
+            type: string
+        analyzedAt:
+          type: string
+      required:
+        - repositoryUrl
+        - repositoryName
+        - overview
+        - language
+        - stars
+        - entryPoints
+        - keyFiles
+        - architecture
+        - analyzedAt
+    RepositoryAnswer:
+      type: object
+      properties:
+        answer:
+          type: string
+        sources:
+          type: array
+          items:
+            type: string
+      required:
+        - answer
+        - sources
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
 
