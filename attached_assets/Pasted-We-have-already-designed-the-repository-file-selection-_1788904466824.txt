@@ -1,0 +1,478 @@
+We have already designed the repository file-selection policy for RepoLens.
+
+Please implement the real public GitHub repository ingestion flow using the design below.
+
+Important constraints:
+- Keep the current frontend UI and visual design unchanged.
+- Do not redesign the architecture.
+- Do not introduce embeddings, vector databases, authentication, persistent databases, LangChain, or other frameworks.
+- Do not invent a different file-ranking strategy.
+- The file-selection policy below is intentional and should be implemented as specified.
+
+Goal:
+A user pastes a public GitHub repository URL.
+The backend should:
+1. Parse the owner/repo safely.
+2. Fetch repository metadata and default branch.
+3. Fetch the recursive repository tree through the GitHub API.
+4. Rank high-signal files using our deterministic heuristic.
+5. Fetch file contents in ranked order.
+6. Apply strict bounded-ingestion limits.
+7. Return repository metadata plus the selected files.
+8. For now, continue using deterministic placeholder analysis output. Do NOT add LLM calls yet.
+
+Only support URLs of the form:
+
+https://github.com/{owner}/{repo}
+
+Public repositories only.
+
+--------------------------------------------------
+BACKEND MODULE RESPONSIBILITIES
+--------------------------------------------------
+
+Use:
+
+backend/github_client.py
+    Responsible only for GitHub-specific operations:
+    - URL parsing
+    - repository metadata
+    - default branch
+    - recursive tree fetching
+    - individual file fetching
+    - GitHub API error handling
+
+backend/file_selector.py
+    Responsible only for:
+    - path eligibility
+    - ignored directories
+    - deterministic file ranking
+    - candidate selection
+    - content-size budgeting
+
+Do not mix GitHub HTTP logic into file_selector.py.
+
+--------------------------------------------------
+FILE SELECTION CONFIGURATION
+--------------------------------------------------
+
+Use exactly these ingestion limits:
+
+MAX_SELECTED_FILES = 25
+MAX_FILE_CHARS = 10_000
+MAX_TOTAL_CHARS = 100_000
+MAX_CANDIDATE_FILES = 50
+
+We intentionally rank more candidate files than we finally keep, because some files may fail to fetch, be empty, or be unusable.
+
+--------------------------------------------------
+SUPPORTED FILES
+--------------------------------------------------
+
+SOURCE_EXTENSIONS = {
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".java",
+    ".cpp",
+    ".cc",
+    ".c",
+    ".h",
+    ".hpp",
+    ".go",
+    ".rs",
+    ".md",
+}
+
+Also allow these high-signal project metadata files even though their extensions may not be in SOURCE_EXTENSIONS:
+
+SPECIAL_FILES = {
+    "package.json",
+    "pyproject.toml",
+    "requirements.txt",
+    "setup.py",
+    "setup.cfg",
+    "cargo.toml",
+    "go.mod",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "makefile",
+    "dockerfile",
+}
+
+Filename comparisons should be case-insensitive.
+
+--------------------------------------------------
+IGNORED DIRECTORIES
+--------------------------------------------------
+
+Ignore files located under these directory components:
+
+IGNORED_DIRS = {
+    ".git",
+    "node_modules",
+    "dist",
+    "build",
+    ".next",
+    "coverage",
+    "__pycache__",
+    "venv",
+    ".venv",
+    "vendor",
+    "target",
+    ".idea",
+    ".vscode",
+}
+
+Do not ignore a file just because one of these strings appears as a substring.
+Treat them as path components.
+
+--------------------------------------------------
+FILE RANKING POLICY
+--------------------------------------------------
+
+Implement a deterministic and explainable function:
+
+score_file(path: str) -> int
+
+The purpose is to approximate which files a developer would inspect first when trying to understand an unfamiliar repository.
+
+Unsupported files should never be selected.
+
+Use this scoring policy.
+
+1. README / documentation
+
+If filename == "readme.md":
+    +40
+
+If it is the root README:
+    additional +10
+
+2. Project metadata
+
+If filename is in SPECIAL_FILES:
+    +18
+
+3. Likely entry points
+
+ENTRYPOINT_NAMES = {
+    "main.py",
+    "app.py",
+    "server.py",
+    "cli.py",
+    "train.py",
+    "run.py",
+    "index.js",
+    "index.ts",
+    "index.tsx",
+    "main.js",
+    "main.ts",
+    "main.tsx",
+}
+
+If filename is one of these:
+    +30
+
+4. Semantically important filenames
+
+IMPORTANT_PREFIXES = (
+    "model",
+    "train",
+    "config",
+    "server",
+    "client",
+    "router",
+    "api",
+    "database",
+    "storage",
+    "index",
+    "parser",
+    "tokenizer",
+)
+
+If the filename stem starts with one of these:
+    +14
+
+5. Core source directories
+
+CORE_DIRS = {
+    "src",
+    "app",
+    "lib",
+    "backend",
+    "server",
+    "core",
+    "pkg",
+    "cmd",
+}
+
+If any parent directory component is one of CORE_DIRS:
+    +8
+
+6. Prefer shallow files
+
+Define depth as:
+
+README.md          -> depth 0
+src/model.py       -> depth 1
+src/models/gpt.py  -> depth 2
+
+Scoring:
+
+depth == 0:
+    +10
+
+depth == 1:
+    +6
+
+depth == 2:
+    +3
+
+7. Prefer source code slightly over secondary markdown docs
+
+If extension != ".md":
+    +4
+
+8. Tests should be lower priority, but NOT excluded
+
+TEST_DIR_NAMES = {
+    "test",
+    "tests",
+    "__tests__",
+    "spec",
+    "specs",
+}
+
+If any parent directory is in TEST_DIR_NAMES:
+    -12
+
+Also apply -10 to common test filename patterns such as:
+
+test_*.py
+*_test.py
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+*.test.js
+*.spec.js
+
+Tests are intentionally penalized rather than ignored because they may still contain useful behavioral information.
+
+9. Generated/minified files
+
+If "generated" appears in the lowercase path:
+    -15
+
+If ".min.js" appears in the lowercase path:
+    -25
+
+--------------------------------------------------
+RANKING ORDER
+--------------------------------------------------
+
+Create a RankedFile type containing:
+
+path: str
+score: int
+
+The repository tree comes from the GitHub API.
+
+Only consider tree items where:
+
+item["type"] == "blob"
+
+After scoring eligible files, sort deterministically by:
+
+1. higher score first
+2. shallower depth first
+3. lexicographic path order
+
+Return at most MAX_CANDIDATE_FILES = 50 candidates.
+
+The result should be stable and deterministic across identical repository trees.
+
+--------------------------------------------------
+CONTENT FETCHING
+--------------------------------------------------
+
+After ranking the top candidate paths, fetch them in ranked order.
+
+Conceptually:
+
+ranked_candidates = rank_repository_files(tree)
+
+fetched_files = []
+
+for candidate in ranked_candidates:
+    try:
+        content = fetch_file(...)
+    except GitHub/file decoding error:
+        continue
+
+    fetched_files.append((candidate.path, content))
+
+Do not fail the entire repository analysis just because one candidate file cannot be fetched.
+
+--------------------------------------------------
+BOUNDED CONTENT SELECTION
+--------------------------------------------------
+
+After contents have been fetched, apply a second selection stage.
+
+Create a SelectedFile type containing:
+
+path: str
+content: str
+original_chars: int
+included_chars: int
+truncated: bool
+
+Implement:
+
+select_file_contents(
+    fetched_files,
+    max_files=25,
+    max_file_chars=10_000,
+    max_total_chars=100_000,
+)
+
+Behavior:
+
+- fetched_files are already in ranking order
+- skip empty / whitespace-only files
+- stop after 25 selected files
+- include at most 10,000 characters from any individual file
+- include at most 100,000 characters total across the repository
+- truncate files when needed
+- if only part of the remaining total budget is available, include only that amount
+- record whether each file was truncated
+- preserve ranked ordering
+
+Do not download or ingest the whole repository.
+
+--------------------------------------------------
+EXPECTED PIPELINE
+--------------------------------------------------
+
+The final backend flow should be:
+
+GitHub URL
+    ↓
+parse owner/repo
+    ↓
+fetch metadata + default branch
+    ↓
+fetch recursive tree
+    ↓
+filter supported paths
+    ↓
+rank top 50 candidate files
+    ↓
+fetch candidate contents in ranked order
+    ↓
+skip failed/empty files
+    ↓
+apply per-file and total character budgets
+    ↓
+keep at most 25 selected files
+    ↓
+return selected repository context
+
+--------------------------------------------------
+CURRENT API BEHAVIOR
+--------------------------------------------------
+
+Keep the existing frontend API contract working.
+
+The /api/analyze endpoint should now perform real GitHub ingestion.
+
+For this stage, do NOT add LLM analysis yet.
+
+Return deterministic placeholder analysis fields plus useful ingestion metadata, for example:
+
+{
+  "repo_name": "...",
+  "owner": "...",
+  "description": "...",
+  "default_branch": "...",
+  "selected_file_count": 18,
+  "selected_files": [
+    {
+      "path": "README.md",
+      "score": 50,
+      "included_chars": 5000,
+      "truncated": false
+    }
+  ],
+  ...
+}
+
+You may adapt this shape to the existing frontend schema as long as the current UI continues to work.
+
+Do not expose full source file contents to the frontend unless they are already required by the current UI.
+
+--------------------------------------------------
+DEBUGGING / VALIDATION
+--------------------------------------------------
+
+Add a simple backend debug log showing the ranked candidates in a readable form, such as:
+
+50  README.md
+44  src/main.py
+32  src/model.py
+...
+
+Also log the final selected file count and total included characters.
+
+Keep these logs concise.
+
+--------------------------------------------------
+ERROR HANDLING
+--------------------------------------------------
+
+Handle at least:
+
+- malformed GitHub URL
+- unsupported host
+- repository not found
+- private/inaccessible repository
+- GitHub rate-limit response
+- recursive tree fetch failure
+- individual file fetch failure
+- non-text / undecodable file content
+
+Return clean API errors instead of stack traces.
+
+--------------------------------------------------
+IMPORTANT IMPLEMENTATION PRINCIPLES
+--------------------------------------------------
+
+Keep the code explicit and readable.
+
+Do not optimize prematurely.
+
+Do not add:
+- directory diversity quotas
+- AST parsing
+- dependency graphs
+- embeddings
+- semantic search
+- repository cloning
+- Git history analysis
+- background workers
+
+We will evaluate the simple ranking policy first on several repositories and only add complexity if an observed failure justifies it.
+
+Before making changes, inspect the existing backend structure and preserve working interfaces where reasonable.
+
+After implementation:
+1. run the application
+2. test it with at least one real public GitHub repository
+3. report which backend files you changed
+4. report the top-ranked files from the test repository
+5. report any implementation choices where the existing codebase required deviation from this specification

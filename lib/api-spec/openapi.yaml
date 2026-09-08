@@ -124,7 +124,13 @@ components:
       properties:
         repositoryUrl:
           type: string
+        owner:
+          type: string
         repositoryName:
+          type: string
+        description:
+          type: string
+        defaultBranch:
           type: string
         overview:
           type: string
@@ -146,9 +152,20 @@ components:
             type: string
         analyzedAt:
           type: string
+        selectedFileCount:
+          type: integer
+        selectedTotalChars:
+          type: integer
+        selectedFiles:
+          type: array
+          items:
+            $ref: "#/components/schemas/SelectedRepositoryFile"
       required:
         - repositoryUrl
+        - owner
         - repositoryName
+        - description
+        - defaultBranch
         - overview
         - language
         - stars
@@ -156,6 +173,25 @@ components:
         - keyFiles
         - architecture
         - analyzedAt
+        - selectedFileCount
+        - selectedTotalChars
+        - selectedFiles
+    SelectedRepositoryFile:
+      type: object
+      properties:
+        path:
+          type: string
+        score:
+          type: integer
+        includedChars:
+          type: integer
+        truncated:
+          type: boolean
+      required:
+        - path
+        - score
+        - includedChars
+        - truncated
     RepositoryAnswer:
       type: object
       properties:

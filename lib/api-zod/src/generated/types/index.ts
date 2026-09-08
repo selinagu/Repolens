@@ -14,3 +14,4 @@ export * from './repositoryAnalysis';
 export * from './repositoryAnswer';
 export * from './repositoryFile';
 export * from './repositoryFileKind';
+export * from './selectedRepositoryFile';

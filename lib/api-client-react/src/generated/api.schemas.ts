@@ -38,9 +38,19 @@ export interface RepositoryFile {
   description: string;
 }
 
+export interface SelectedRepositoryFile {
+  path: string;
+  score: number;
+  includedChars: number;
+  truncated: boolean;
+}
+
 export interface RepositoryAnalysis {
   repositoryUrl: string;
+  owner: string;
   repositoryName: string;
+  description: string;
+  defaultBranch: string;
   overview: string;
   language: string;
   stars: number;
@@ -48,6 +58,9 @@ export interface RepositoryAnalysis {
   keyFiles: RepositoryFile[];
   architecture: string[];
   analyzedAt: string;
+  selectedFileCount: number;
+  selectedTotalChars: number;
+  selectedFiles: SelectedRepositoryFile[];
 }
 
 export interface RepositoryAnswer {

@@ -30,7 +30,10 @@ export const AnalyzeRepositoryBody = zod.object({
 
 export const AnalyzeRepositoryResponse = zod.object({
   "repositoryUrl": zod.string(),
+  "owner": zod.string(),
   "repositoryName": zod.string(),
+  "description": zod.string(),
+  "defaultBranch": zod.string(),
   "overview": zod.string(),
   "language": zod.string(),
   "stars": zod.number().int(),
@@ -45,7 +48,15 @@ export const AnalyzeRepositoryResponse = zod.object({
   "description": zod.string()
 })),
   "architecture": zod.array(zod.string()),
-  "analyzedAt": zod.string()
+  "analyzedAt": zod.string(),
+  "selectedFileCount": zod.number().int(),
+  "selectedTotalChars": zod.number().int(),
+  "selectedFiles": zod.array(zod.object({
+  "path": zod.string(),
+  "score": zod.number().int(),
+  "includedChars": zod.number().int(),
+  "truncated": zod.boolean()
+}))
 })
 
 

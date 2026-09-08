@@ -6,10 +6,14 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { RepositoryFile } from './repositoryFile';
+import type { SelectedRepositoryFile } from './selectedRepositoryFile';
 
 export interface RepositoryAnalysis {
   repositoryUrl: string;
+  owner: string;
   repositoryName: string;
+  description: string;
+  defaultBranch: string;
   overview: string;
   language: string;
   stars: number;
@@ -17,4 +21,7 @@ export interface RepositoryAnalysis {
   keyFiles: RepositoryFile[];
   architecture: string[];
   analyzedAt: string;
+  selectedFileCount: number;
+  selectedTotalChars: number;
+  selectedFiles: SelectedRepositoryFile[];
 }
