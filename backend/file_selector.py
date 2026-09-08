@@ -10,7 +10,7 @@ MAX_FILE_CHARS = 10_000
 MAX_TOTAL_CHARS = 100_000
 MAX_CANDIDATE_FILES = 50
 
-SOURCE_EXTENSIONS = {
+CODE_EXTENSIONS = {
     ".py",
     ".js",
     ".jsx",
@@ -24,8 +24,13 @@ SOURCE_EXTENSIONS = {
     ".hpp",
     ".go",
     ".rs",
+}
+
+DOCUMENT_EXTENSIONS = {
     ".md",
 }
+
+SOURCE_EXTENSIONS = CODE_EXTENSIONS | DOCUMENT_EXTENSIONS
 
 SPECIAL_FILES = {
     "package.json",
@@ -86,6 +91,11 @@ IMPORTANT_PREFIXES = (
     "index",
     "parser",
     "tokenizer",
+    "route",
+    "service",
+    "controller",
+    "session",
+    "adapter",
 )
 
 CORE_DIRS = {
@@ -105,6 +115,11 @@ TEST_DIR_NAMES = {
     "__tests__",
     "spec",
     "specs",
+}
+
+PACKAGE_INTERFACE_NAMES = {
+    "__init__.py",
+    "__main__.py",
 }
 
 
@@ -130,6 +145,29 @@ def _path_parts(path: str) -> list[str]:
 
 def _has_ignored_directory(path: str) -> bool:
     return any(part.lower() in IGNORED_DIRS for part in _path_parts(path)[:-1])
+
+
+def is_test_path(path: str) -> bool:
+    parts = _path_parts(path)
+    if not parts:
+        return False
+
+    filename = parts[-1].lower()
+    return (
+        any(part.lower() in TEST_DIR_NAMES for part in parts[:-1])
+        or (filename.startswith("test_") and filename.endswith(".py"))
+        or filename.endswith("_test.py")
+        or filename.endswith(
+            (
+                ".test.ts",
+                ".test.tsx",
+                ".spec.ts",
+                ".spec.tsx",
+                ".test.js",
+                ".spec.js",
+            )
+        )
+    )
 
 
 def is_eligible_file(path: str, item_type: str = "blob") -> bool:
@@ -159,13 +197,18 @@ def score_file(path: str) -> int:
             score += 10
 
     if lowered_filename in SPECIAL_FILES:
-        score += 18
+        score += 12
 
-    if lowered_filename in ENTRYPOINT_NAMES:
-        score += 30
+    test_path = is_test_path(path)
+    if not test_path:
+        if lowered_filename in ENTRYPOINT_NAMES:
+            score += 30
 
-    if stem.startswith(IMPORTANT_PREFIXES):
-        score += 14
+        if stem.startswith(IMPORTANT_PREFIXES):
+            score += 14
+
+    if lowered_filename in PACKAGE_INTERFACE_NAMES:
+        score += 12
 
     if any(part.lower() in CORE_DIRS for part in parts[:-1]):
         score += 8
@@ -177,19 +220,11 @@ def score_file(path: str) -> int:
     elif depth == 2:
         score += 3
 
-    if PurePosixPath(lowered_filename).suffix != ".md":
+    if PurePosixPath(lowered_filename).suffix in CODE_EXTENSIONS:
         score += 4
 
-    if any(part.lower() in TEST_DIR_NAMES for part in parts[:-1]):
-        score -= 12
-
-    if (
-        lowered_filename.startswith("test_")
-        or lowered_filename.endswith("_test.py")
-        or lowered_filename.endswith((".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx"))
-        or lowered_filename.endswith((".test.js", ".spec.js"))
-    ):
-        score -= 10
+    if test_path:
+        score -= 15
 
     if "generated" in lowered_path:
         score -= 15

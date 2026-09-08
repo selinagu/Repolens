@@ -1,0 +1,216 @@
+The real GitHub ingestion implementation is working correctly.
+
+The first validation against psf/requests exposed a ranking failure in our
+file-selection heuristic, so we want to make a targeted v0.2 refinement
+before adding any LLM functionality.
+
+Do not change the frontend, GitHub client, API architecture, ingestion
+budgets, or content-fetching pipeline.
+
+Only update backend/file_selector.py and any tests directly related to it.
+
+Observed ranking:
+
+1. README.md — 60
+2. tests/testserver/server.py — 39
+3. Makefile — 32
+4. pyproject.toml — 32
+5. setup.py — 32
+6. src/requests/api.py — 29
+
+This revealed two problems:
+
+1. A file inside tests/ can receive large production entry-point and
+   architectural filename bonuses, causing tests/testserver/server.py to
+   rank unrealistically high.
+
+2. Root metadata files are currently ranked above too many core source
+   files.
+
+Implement the following exact refinements.
+
+--------------------------------------------------
+1. DISTINGUISH CODE FROM DOCUMENTATION
+--------------------------------------------------
+
+Define:
+
+CODE_EXTENSIONS = {
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".java",
+    ".cpp",
+    ".cc",
+    ".c",
+    ".h",
+    ".hpp",
+    ".go",
+    ".rs",
+}
+
+DOCUMENT_EXTENSIONS = {
+    ".md",
+}
+
+SOURCE_EXTENSIONS = CODE_EXTENSIONS | DOCUMENT_EXTENSIONS
+
+Do not use `extension != ".md"` as a proxy for source code.
+
+The +4 source-code bonus should apply only when:
+
+extension in CODE_EXTENSIONS
+
+--------------------------------------------------
+2. ADD A SINGLE TEST-PATH CLASSIFIER
+--------------------------------------------------
+
+Implement:
+
+is_test_path(path: str) -> bool
+
+It should return True if:
+
+- any parent path component is one of:
+
+TEST_DIR_NAMES = {
+    "test",
+    "tests",
+    "__tests__",
+    "spec",
+    "specs",
+}
+
+OR the filename matches one of the existing common test patterns:
+
+test_*.py
+*_test.py
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+*.test.js
+*.spec.js
+
+Use this single classification in the scoring function rather than
+applying separate directory and filename penalties.
+
+--------------------------------------------------
+3. TEST FILES MUST NOT RECEIVE PRODUCTION BONUSES
+--------------------------------------------------
+
+If is_test_path(path) is True:
+
+- do NOT apply the ENTRYPOINT_NAMES +30 bonus
+- do NOT apply the IMPORTANT_PREFIXES +14 bonus
+
+Tests remain eligible for ingestion.
+
+Apply one test penalty:
+
+-15
+
+Do not double-penalize test files.
+
+The design principle is:
+
+Tests may provide useful behavioral evidence, but a file named server.py
+inside tests/ should not be interpreted as a production entry point.
+
+--------------------------------------------------
+4. LOWER PROJECT-METADATA WEIGHT
+--------------------------------------------------
+
+Change the SPECIAL_FILES bonus from:
+
++18
+
+to:
+
++12
+
+Root-depth bonuses should still apply normally.
+
+This keeps files such as pyproject.toml and package.json useful without
+allowing several metadata files to dominate core implementation files.
+
+--------------------------------------------------
+5. ADD PACKAGE INTERFACE SIGNAL
+--------------------------------------------------
+
+Define:
+
+PACKAGE_INTERFACE_NAMES = {
+    "__init__.py",
+    "__main__.py",
+}
+
+If the filename is in PACKAGE_INTERFACE_NAMES:
+
++12
+
+This is particularly useful for package-style repositories where the
+public package interface is an important starting point.
+
+--------------------------------------------------
+6. EXTEND IMPORTANT PREFIXES SLIGHTLY
+--------------------------------------------------
+
+Keep all current IMPORTANT_PREFIXES and add:
+
+"route",
+"service",
+"controller",
+"session",
+"adapter",
+
+Do not add repository-specific filenames.
+
+The selector should remain general-purpose.
+
+--------------------------------------------------
+7. KEEP EVERYTHING ELSE UNCHANGED
+--------------------------------------------------
+
+Do not change:
+
+MAX_SELECTED_FILES = 25
+MAX_FILE_CHARS = 10_000
+MAX_TOTAL_CHARS = 100_000
+MAX_CANDIDATE_FILES = 50
+
+Do not add:
+
+- embeddings
+- AST parsing
+- dependency analysis
+- directory diversity quotas
+- repository-specific exceptions
+- LLM ranking
+- semantic search
+
+--------------------------------------------------
+VALIDATION
+--------------------------------------------------
+
+After making the change:
+
+1. Run existing selector/budget tests.
+2. Re-run the selector against https://github.com/psf/requests.
+3. Report the new top 15 ranked paths and scores.
+4. Specifically report where these files rank if present:
+
+   README.md
+   src/requests/__init__.py
+   src/requests/api.py
+   src/requests/sessions.py
+   src/requests/models.py
+   src/requests/adapters.py
+   pyproject.toml
+   setup.py
+   tests/testserver/server.py
+
+5. Do not make additional heuristic changes based on the result yet.
+   Report the output first so we can inspect it.
