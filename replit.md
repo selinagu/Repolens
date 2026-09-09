@@ -16,7 +16,7 @@ RepoLens helps developers understand an unfamiliar public GitHub repository quic
 - API: Python FastAPI with bounded GitHub ingestion
 - Frontend: React + TypeScript + Vite + TanStack Query
 - API codegen: Orval (from OpenAPI spec)
-- Python dependencies: FastAPI + Uvicorn, managed through `pyproject.toml` and `uv.lock`
+- Python dependencies: FastAPI + Uvicorn + official OpenAI SDK, managed through `pyproject.toml` and `uv.lock`
 
 ## Where things live
 
@@ -32,8 +32,9 @@ RepoLens helps developers understand an unfamiliar public GitHub repository quic
 
 ## Architecture decisions
 
-- GitHub ingestion and lexical retrieval are deterministic; the analysis model is a narrow replaceable boundary with a safe local baseline.
-- Model output is rejected if it cites files outside the selected or retrieved source context.
+- GitHub ingestion and lexical retrieval are deterministic; `OPENAI_API_KEY` selects the production OpenAI model and an absent key selects the safe local baseline.
+- Repository analysis validates model paths against selected files, while Q&A validates exact citation ranges against retrieved snippets.
+- A configured provider failure returns a service error and never silently falls back to deterministic output.
 - The app uses the shared `/api` service path, so the frontend can call relative API URLs through the workspace proxy.
 - Repository analysis is returned as a structured reading path: overview, architecture, key files, and entry points.
 
@@ -53,6 +54,7 @@ RepoLens helps developers understand an unfamiliar public GitHub repository quic
 - After changing `lib/api-spec/openapi.yaml`, run `pnpm --filter @workspace/api-spec run codegen` before changing frontend or server consumers.
 - GitHub calls are unauthenticated and public-only; no user credentials or OAuth are required.
 - File ingestion is bounded to 50 ranked candidates, 25 selected files, 10,000 characters per file, and 100,000 characters total.
+- Set `OPENAI_API_KEY` to manually smoke-test production analysis; optionally set `OPENAI_MODEL` (default: `gpt-5.4-mini`). Never commit credentials.
 
 ## Pointers
 

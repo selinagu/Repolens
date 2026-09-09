@@ -12,7 +12,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from backend.analyzer import GroundingValidationError, RepositoryAnalyzer
+from backend.analyzer import (
+    AnalysisModelInvalidResponse,
+    AnalysisModelUnavailable,
+    Citation,
+    RepositoryAnalyzer,
+    create_analysis_model,
+)
 from backend.file_selector import (
     SelectedFile,
     rank_repository_files,
@@ -51,13 +57,20 @@ class ErrorResponse(BaseModel):
     error: str
 
 
+MODEL_ROUTE_RESPONSES = {
+    400: {"model": ErrorResponse},
+    502: {"model": ErrorResponse},
+    503: {"model": ErrorResponse},
+}
+
+
 @dataclass(frozen=True)
 class IngestedRepository:
     metadata: RepositoryMetadata
     selected_files: list[SelectedFile]
 
 
-ANALYZER = RepositoryAnalyzer()
+ANALYZER = RepositoryAnalyzer(create_analysis_model())
 
 
 def _ingest_repository(repository_url: str) -> IngestedRepository:
@@ -97,12 +110,28 @@ def _error_response(error: GitHubClientError) -> JSONResponse:
     return JSONResponse(status_code=400, content={"error": error.message})
 
 
+def _file_kind(path: str) -> str:
+    lowered = path.lower()
+    filename = lowered.rsplit("/", 1)[-1]
+    if filename.endswith(".md"):
+        return "docs"
+    if filename in {"package.json", "pyproject.toml", "requirements.txt", "go.mod"}:
+        return "config"
+    if "test" in filename or "/test" in lowered or "/tests" in lowered:
+        return "test"
+    return "module"
+
+
+def _format_citation(citation: Citation) -> str:
+    return f"{citation.path}:L{citation.start_line}-L{citation.end_line}"
+
+
 @app.get("/api/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/api/analyze", responses={400: {"model": ErrorResponse}})
+@app.post("/api/analyze", responses=MODEL_ROUTE_RESPONSES)
 def analyze_repository(payload: AnalyzeRepositoryInput) -> JSONResponse:
     try:
         ingested = _ingest_repository(payload.repositoryUrl)
@@ -120,20 +149,22 @@ def analyze_repository(payload: AnalyzeRepositoryInput) -> JSONResponse:
                 "entryPoints": [
                     {
                         "path": item.path,
-                        "kind": item.kind,
-                        "description": item.description,
+                        "kind": "entry",
+                        "description": item.reason,
                     }
                     for item in analysis.entry_points
                 ],
                 "keyFiles": [
                     {
                         "path": item.path,
-                        "kind": item.kind,
-                        "description": item.description,
+                        "kind": _file_kind(item.path),
+                        "description": item.reason,
                     }
                     for item in analysis.key_files
                 ],
-                "architecture": [item.text for item in analysis.architecture],
+                "architecture": [
+                    f"{item.name}: {item.description}" for item in analysis.architecture
+                ],
                 "analyzedAt": datetime.now(timezone.utc).isoformat(),
                 "selectedFileCount": len(ingested.selected_files),
                 "selectedTotalChars": sum(
@@ -152,6 +183,18 @@ def analyze_repository(payload: AnalyzeRepositoryInput) -> JSONResponse:
         )
     except GitHubClientError as error:
         return _error_response(error)
+    except AnalysisModelUnavailable:
+        logger.exception("repository analysis provider unavailable")
+        return JSONResponse(
+            status_code=503,
+            content={"error": "The analysis service is temporarily unavailable."},
+        )
+    except AnalysisModelInvalidResponse:
+        logger.exception("repository analysis provider returned invalid output")
+        return JSONResponse(
+            status_code=502,
+            content={"error": "The analysis service returned an invalid response."},
+        )
     except Exception:
         logger.exception("unexpected repository analysis failure")
         return JSONResponse(
@@ -162,7 +205,7 @@ def analyze_repository(payload: AnalyzeRepositoryInput) -> JSONResponse:
         )
 
 
-@app.post("/api/ask", responses={400: {"model": ErrorResponse}})
+@app.post("/api/ask", responses=MODEL_ROUTE_RESPONSES)
 def ask_repository(payload: AskRepositoryInput) -> dict[str, Any]:
     try:
         parse_repository_url(payload.repositoryUrl)
@@ -180,16 +223,23 @@ def ask_repository(payload: AskRepositoryInput) -> dict[str, Any]:
         answer = ANALYZER.answer(
             ingested.metadata, ingested.selected_files, payload.question.strip()
         )
-        return {"answer": answer.answer, "sources": list(answer.sources)}
+        return {
+            "answer": answer.answer,
+            "sources": [_format_citation(citation) for citation in answer.citations],
+        }
     except GitHubClientError as error:
         return _error_response(error)
-    except GroundingValidationError:
-        logger.exception("repository answer failed source-grounding validation")
+    except AnalysisModelUnavailable:
+        logger.exception("repository answer provider unavailable")
+        return JSONResponse(
+            status_code=503,
+            content={"error": "The analysis service is temporarily unavailable."},
+        )
+    except AnalysisModelInvalidResponse:
+        logger.exception("repository answer provider returned invalid output")
         return JSONResponse(
             status_code=502,
-            content={
-                "error": "The repository answer could not be grounded in its sources."
-            },
+            content={"error": "The analysis service returned an invalid response."},
         )
     except Exception:
         logger.exception("unexpected repository answer failure")

@@ -5,5 +5,6 @@ description = "Bounded public GitHub repository ingestion for RepoLens"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.141.1",
+    "openai>=2.28.0",
     "uvicorn>=0.52.4",
 ]

@@ -51,6 +51,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Analysis provider returned invalid structured output
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Analysis provider unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /ask:
     post:
       operationId: askRepository
@@ -72,6 +84,18 @@ paths:
                 $ref: "#/components/schemas/RepositoryAnswer"
         "400":
           description: Invalid question
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Analysis provider returned invalid structured output
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Analysis provider unavailable
           content:
             application/json:
               schema:
@@ -199,6 +223,7 @@ components:
           type: string
         sources:
           type: array
+          description: Validated source locations formatted as path:Lstart-Lend.
           items:
             type: string
       required:
