@@ -65,6 +65,7 @@ export interface RepositoryAnalysis {
 
 export interface RepositoryAnswer {
   answer: string;
+  /** Validated source locations formatted as path:Lstart-Lend. */
   sources: string[];
 }
 

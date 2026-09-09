@@ -142,7 +142,7 @@ export const getAnalyzeRepositoryUrl = () => {
 }
 
 /**
- * Returns realistic mock repository understanding data for a valid public GitHub URL.
+ * Returns repository understanding data grounded in a bounded selection of source files.
  * @summary Analyze a public GitHub repository
  */
 export const analyzeRepository = async (analyzeRepositoryInput: AnalyzeRepositoryInput, options?: Parameters<typeof customFetch>[1]): Promise<RepositoryAnalysis> => {
@@ -214,7 +214,7 @@ export const getAskRepositoryUrl = () => {
 }
 
 /**
- * Returns a mock source-cited answer for a repository question.
+ * Returns a source-cited answer retrieved from a bounded repository snapshot.
  * @summary Ask a question about the repository
  */
 export const askRepository = async (askRepositoryInput: AskRepositoryInput, options?: Parameters<typeof customFetch>[1]): Promise<RepositoryAnswer> => {

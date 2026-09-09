@@ -18,7 +18,7 @@ export const HealthCheckResponse = zod.object({
 
 
 /**
- * Returns realistic mock repository understanding data for a valid public GitHub URL.
+ * Returns repository understanding data grounded in a bounded selection of source files.
  * @summary Analyze a public GitHub repository
  */
 
@@ -61,7 +61,7 @@ export const AnalyzeRepositoryResponse = zod.object({
 
 
 /**
- * Returns a mock source-cited answer for a repository question.
+ * Returns a source-cited answer retrieved from a bounded repository snapshot.
  * @summary Ask a question about the repository
  */
 
@@ -75,7 +75,7 @@ export const AskRepositoryBody = zod.object({
 
 export const AskRepositoryResponse = zod.object({
   "answer": zod.string(),
-  "sources": zod.array(zod.string())
+  "sources": zod.array(zod.string()).describe('Validated source locations formatted as path:Lstart-Lend.')
 })
 
 
